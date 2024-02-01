@@ -30,7 +30,7 @@ type Loop struct {
 	render RenderFunc
 
 	// Runtime values
-	currentFps uint16
+	currentFps int
 
 	once sync.Once
 }
@@ -48,7 +48,7 @@ func (l *Loop) SetDebug(debug bool) *Loop {
 
 func (l *Loop) SetTargetFps(fps int) *Loop {
 	l.targetFps = max(fps, 1)
-	l.msPerFrame = 1 / l.targetFps * 1000
+	l.msPerFrame = int(1.0 / float32(l.targetFps) * 1000)
 	return l
 }
 
@@ -57,7 +57,7 @@ func (l *Loop) GetTargetFps() int {
 }
 
 func (l *Loop) GetCurrentFps() int {
-	return int(l.currentFps)
+	return l.currentFps
 }
 
 func (l *Loop) IsRunning() bool {
@@ -109,7 +109,7 @@ func (l *Loop) Stop() error {
 
 func (l *Loop) run() {
 	l.stopCh = make(chan struct{})
-	frameCounter := uint64(0)
+	frameCounter := 0
 	lastFrame := time.Now()
 	lastSecond := time.Now()
 
@@ -137,16 +137,15 @@ func (l *Loop) run() {
 			lastFrame = time.Now()
 			frameCounter++
 
-			elapsed := time.Since(lastSecond)
-			if elapsed > 1000 {
-				l.currentFps = uint16(frameCounter * uint64(time.Second) / uint64(elapsed))
+			if time.Since(lastSecond).Seconds() >= 1 {
+				l.currentFps = frameCounter
 				lastSecond = time.Now()
 				frameCounter = 0
 			}
 
-			sleepTime := time.Duration(l.msPerFrame)*time.Millisecond - time.Since(start)
+			sleepTime := int64(l.msPerFrame) - time.Since(start).Milliseconds()
 			if sleepTime > 0 {
-				time.Sleep(sleepTime)
+				time.Sleep(time.Duration(sleepTime) * time.Millisecond)
 			}
 		}
 
