@@ -11,7 +11,7 @@ const (
 )
 
 type InputFunc func()
-type UpdateFunc func(time.Duration)
+type UpdateFunc func(deltaTime time.Duration)
 type RenderFunc func()
 
 type Loop struct {
@@ -47,7 +47,7 @@ func (l *Loop) SetDebug(debug bool) *Loop {
 }
 
 func (l *Loop) SetTargetFps(fps int) *Loop {
-	l.targetFps = min(fps, 1)
+	l.targetFps = max(fps, 1)
 	l.msPerFrame = 1 / l.targetFps * 1000
 	return l
 }
