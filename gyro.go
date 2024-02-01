@@ -2,35 +2,32 @@ package gyro
 
 import (
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 )
 
 const (
-	DEFAULT_FPS       = 60
-	MS_PER_CLOCK_TICK = 10
+	DEFAULT_FPS = 60
 )
 
-type inputFunc func()
-type updateFunc func(time.Duration)
-type renderFunc func()
+type InputFunc func()
+type UpdateFunc func(time.Duration)
+type RenderFunc func()
 
-type loop struct {
+type Loop struct {
 	// Loop Config
-	targetFps  uint16
-	msPerFrame float32
+	targetFps  int
+	msPerFrame int
 	quitCh     chan struct{}
 
 	// Flags
 	isDebugMode bool
-	isSafeMode  bool
 	isRunning   bool
 
 	// Loop functions
-	input  inputFunc
-	update updateFunc
-	render renderFunc
+	input  InputFunc
+	update UpdateFunc
+	render RenderFunc
 
 	// Runtime values
 	currentFps uint16
@@ -38,138 +35,121 @@ type loop struct {
 	once sync.Once
 }
 
-func NewLoop() *loop {
-	l := &loop{}
+func NewLoop() *Loop {
+	l := &Loop{}
 	l.SetTargetFps(DEFAULT_FPS)
 	return l
 }
 
-func (l *loop) SetDebug(debug bool) *loop {
+func (l *Loop) SetDebug(debug bool) *Loop {
 	l.isDebugMode = debug
 	return l
 }
 
-func (l *loop) SetSafeMode(safe bool) *loop {
-	if l.shouldPreventSensitiveChanges() {
-		return l
-	}
-	l.isSafeMode = safe
+func (l *Loop) SetTargetFps(fps int) *Loop {
+	l.targetFps = min(fps, 1)
+	l.msPerFrame = 1 / l.targetFps * 1000
 	return l
 }
 
-func (l *loop) SetTargetFps(fps int) *loop {
-	// FPS must be between 1 and 65535 (to fit uint16)
-	l.targetFps = uint16(max(min(fps, 65535), 1))
-	l.msPerFrame = 1000.0 / float32(l.targetFps)
-	return l
-}
-
-func (l *loop) GetTargetFps() uint16 {
+func (l *Loop) GetTargetFps() int {
 	return l.targetFps
 }
 
-func (l *loop) SetUpdateFunc(update updateFunc) *loop {
-	if l.shouldPreventSensitiveChanges() {
-		return l
-	}
-
+func (l *Loop) SetUpdateFunc(update UpdateFunc) *Loop {
 	l.update = update
 	return l
 }
 
-func (l *loop) SetInputFunc(input inputFunc) *loop {
-	if l.shouldPreventSensitiveChanges() {
-		return l
-	}
-
+func (l *Loop) SetInputFunc(input InputFunc) *Loop {
 	l.input = input
 	return l
 }
 
-func (l *loop) SetRenderFunc(render renderFunc) *loop {
-	if l.shouldPreventSensitiveChanges() {
-		return l
-	}
-
+func (l *Loop) SetRenderFunc(render RenderFunc) *Loop {
 	l.render = render
 	return l
 }
 
 // Start attempts to start the game loop.
 // It requires an update function to be set and
-// it will run just once for each loop instance.
-func (l *loop) Start() error {
+// it will run just once for each Loop instance.
+func (l *Loop) Start() error {
 	if l.update == nil {
 		return errors.New(ERR_NO_UPDATE_FUNC)
 	}
+
+	if l.isRunning {
+		return nil
+	}
+
 	l.isRunning = true
-	l.once.Do(l.start)
+	l.run()
 	return nil
 }
 
 // Quit attempts to stop the game loop by sending a quit signal
-func (l *loop) Quit() error {
-	select {
-	case l.quitCh <- struct{}{}:
+func (l *Loop) Quit() error {
+	if !l.isRunning {
 		return nil
-	default:
-		return errors.New(ERR_QUIT_CHAN_BLOCKED)
 	}
+
+	l.isRunning = false
+	close(l.quitCh)
+	return nil
 }
 
-func (l *loop) IsRunning() bool {
+func (l *Loop) IsRunning() bool {
 	return l.isRunning
 }
 
-func (l *loop) GetCurrentFps() int {
+func (l *Loop) GetCurrentFps() int {
 	return int(l.currentFps)
 }
 
-func (l *loop) shouldPreventSensitiveChanges() bool {
-	return l.isSafeMode && l.isRunning
-}
-
-func (l *loop) start() {
-	var frameCounter int
-
+func (l *Loop) run() {
+	l.quitCh = make(chan struct{})
+	frameCounter := uint64(0)
 	lastFrame := time.Now()
 	lastSecond := time.Now()
-
-	// Ticker to limit CPU usage
-	gameClock := time.NewTicker(MS_PER_CLOCK_TICK * time.Millisecond)
-	prevUpdateDone := true
 
 	for {
 		// Block game loop until quit signal or clock tick
 		select {
 		case <-l.quitCh:
 			return
-		case <-gameClock.C:
-			msSinceLastFrame := float32(time.Since(lastFrame).Milliseconds())
-			// Wait until next tick if we can't update yet
-			if !prevUpdateDone || msSinceLastFrame < l.msPerFrame {
-				continue
+		default:
+			start := time.Now()
+
+			if l.input != nil {
+				l.input()
 			}
-		}
 
-		// Frame logic
-		prevUpdateDone = false
-		go func() {
-			// Call update with delta time
-			l.update(time.Since(lastFrame))
+			if l.update != nil {
+				// Call update with delta time
+				l.update(time.Since(lastFrame))
+			}
+
+			if l.render != nil {
+				l.render()
+			}
+
+			// Frame finished timestamp (input, update, render are done)
 			lastFrame = time.Now()
-			prevUpdateDone = true
-
 			frameCounter++
-			msSinceLastSecond := time.Since(lastSecond).Milliseconds()
-			l.currentFps = uint16(float32(frameCounter) / float32(msSinceLastSecond) * 1000)
-			if msSinceLastSecond > 1000 {
+
+			elapsed := time.Since(lastSecond)
+			if elapsed > 1000 {
+				l.currentFps = uint16(frameCounter * uint64(time.Second) / uint64(elapsed))
 				lastSecond = time.Now()
 				frameCounter = 0
 			}
-			if l.isDebugMode {
-				fmt.Println("fps", l.currentFps)
+
+			sleepTime := time.Duration(l.msPerFrame)*time.Millisecond - time.Since(start)
+			if sleepTime > 0 {
+				time.Sleep(sleepTime)
 			}
-		}()
+		}
+
 	}
 }
