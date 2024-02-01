@@ -18,7 +18,7 @@ type Loop struct {
 	// Loop Config
 	targetFps  int
 	msPerFrame int
-	quitCh     chan struct{}
+	stopCh     chan struct{}
 
 	// Flags
 	isDebugMode bool
@@ -56,6 +56,14 @@ func (l *Loop) GetTargetFps() int {
 	return l.targetFps
 }
 
+func (l *Loop) GetCurrentFps() int {
+	return int(l.currentFps)
+}
+
+func (l *Loop) IsRunning() bool {
+	return l.isRunning
+}
+
 func (l *Loop) SetUpdateFunc(update UpdateFunc) *Loop {
 	l.update = update
 	return l
@@ -88,35 +96,26 @@ func (l *Loop) Start() error {
 	return nil
 }
 
-// Quit attempts to stop the game loop by sending a quit signal
-func (l *Loop) Quit() error {
+// Stop attempts to stop the game loop by sending a stop signal
+func (l *Loop) Stop() error {
 	if !l.isRunning {
 		return nil
 	}
 
 	l.isRunning = false
-	close(l.quitCh)
+	close(l.stopCh)
 	return nil
 }
 
-func (l *Loop) IsRunning() bool {
-	return l.isRunning
-}
-
-func (l *Loop) GetCurrentFps() int {
-	return int(l.currentFps)
-}
-
 func (l *Loop) run() {
-	l.quitCh = make(chan struct{})
+	l.stopCh = make(chan struct{})
 	frameCounter := uint64(0)
 	lastFrame := time.Now()
 	lastSecond := time.Now()
 
 	for {
-		// Block game loop until quit signal or clock tick
 		select {
-		case <-l.quitCh:
+		case <-l.stopCh:
 			return
 		default:
 			start := time.Now()
