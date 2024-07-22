@@ -13,6 +13,7 @@ const (
 type InputFunc func()
 type UpdateFunc func(deltaTime time.Duration)
 type RenderFunc func()
+type RecoverFunc func(any)
 
 type Loop struct {
 	// Loop Config
@@ -25,9 +26,10 @@ type Loop struct {
 	isRunning   bool
 
 	// Loop functions
-	input  InputFunc
-	update UpdateFunc
-	render RenderFunc
+	input       InputFunc
+	update      UpdateFunc
+	render      RenderFunc
+	recoverFunc RecoverFunc
 
 	// Runtime values
 	currentFps int
@@ -79,10 +81,23 @@ func (l *Loop) SetRenderFunc(render RenderFunc) *Loop {
 	return l
 }
 
+func (l *Loop) SetRecoverFunc(recover RecoverFunc) *Loop {
+	l.recoverFunc = recover
+	return l
+}
+
 // Start attempts to start the game loop.
 // It requires an update function to be set and
 // it will run just once for each Loop instance.
 func (l *Loop) Start() error {
+	if l.recoverFunc != nil {
+		defer func() {
+			if r := recover(); r != nil {
+				l.recoverFunc(r)
+			}
+		}()
+	}
+
 	if l.update == nil {
 		return errors.New(ERR_NO_UPDATE_FUNC)
 	}
